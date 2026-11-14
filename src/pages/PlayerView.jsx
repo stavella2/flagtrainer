@@ -13,6 +13,7 @@ export default function PlayerView() {
   const [rsvps, setRsvps] = useState([])
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState('')
+  const [history, setHistory] = useState([])
 
   // Sesión del jugador
   const [player, setPlayer] = useState(null)
@@ -41,9 +42,20 @@ export default function PlayerView() {
     if (teamData?.error) { setMsg('Link inválido'); setLoading(false); return }
     setData(teamData)
     setRsvps(rsvpsData || [])
+    
+    // Si ya hay un jugador logueado (o al loguearse), traemos su historial
+    const savedPlayer = localStorage.getItem(`player_${token}`)
+    const savedPin = localStorage.getItem(`pin_${token}`)
+    if (savedPlayer && savedPin) {
+      const p = JSON.parse(savedPlayer)
+      const { data: histData } = await supabase.rpc('get_player_history_by_token', {
+        p_token: token, p_player_id: p.id, p_pin: savedPin
+      })
+      if (histData && !histData.error) setHistory(histData)
+    }
+    
     setLoading(false)
   }
-
   async function handleLogin(e) {
     e.preventDefault()
     setIsLoggingIn(true); setLoginError('')
@@ -55,11 +67,16 @@ export default function PlayerView() {
     } else {
       setPlayer(res.player)
       localStorage.setItem(`player_${token}`, JSON.stringify(res.player))
-      localStorage.setItem(`pin_${token}`, pin) // <-- Guardamos el PIN
+      localStorage.setItem(`pin_${token}`, pin)
+      
+      // Traer el historial acá mismo
+      const { data: histData } = await supabase.rpc('get_player_history_by_token', {
+        p_token: token, p_player_id: res.player.id, p_pin: pin
+      })
+      if (histData && !histData.error) setHistory(histData)
     }
     setIsLoggingIn(false)
   }
-
   function logout() {
     setPlayer(null)
     setPin('')
@@ -162,6 +179,38 @@ export default function PlayerView() {
             {msg && <p className="text-sm text-emerald-400 text-center">{msg}</p>}
           </div>
         </>
+      )}
+      {/* Historial de entrenamientos */}
+      {history.length > 0 && (
+        <div className="pt-4 space-y-2">
+          <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold">Entrenamientos anteriores</p>
+          <div className="space-y-2">
+            {history.map(h => (
+              <div key={h.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">
+                    {new Date(h.date + 'T00:00').toLocaleDateString('es', { weekday: 'short', day: 'numeric', month: 'short' })}
+                    {h.start_time && ` · ${h.start_time.slice(0,5)}`}
+                  </p>
+                  {h.location && <p className="text-xs text-slate-500">📍 {h.location}</p>}
+                </div>
+                <div className="text-right">
+                  {h.my_rsvp ? (
+                    <span className={`text-xs font-semibold px-2 py-1 rounded ${
+                      h.my_rsvp === 'yes' ? 'bg-emerald-900 text-emerald-300' : 
+                      h.my_rsvp === 'no' ? 'bg-rose-900 text-rose-300' : 
+                      'bg-amber-900 text-amber-300'
+                    }`}>
+                      {h.my_rsvp === 'yes' ? 'Dije: Sí' : h.my_rsvp === 'no' ? 'Dije: No' : 'Dije: Tal vez'}
+                    </span>
+                  ) : (
+                    <span className="text-xs text-slate-600">Sin respuesta</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       )}
     </div>
   )
