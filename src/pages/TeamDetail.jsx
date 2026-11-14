@@ -10,7 +10,9 @@ export default function TeamDetail() {
   const [players, setPlayers] = useState([])
   const [trainings, setTrainings] = useState([])
   const [loading, setLoading] = useState(true)
-  const [newPlayer, setNewPlayer] = useState({ name: '', number: '', position: '' })
+  
+  // Estado para el nuevo jugador, ahora con PIN
+  const [newPlayer, setNewPlayer] = useState({ name: '', number: '', position: '', pin: '' })
 
   useEffect(() => { load() }, [teamId])
 
@@ -27,15 +29,22 @@ export default function TeamDetail() {
 
   async function addPlayer(e) {
     e.preventDefault()
-    if (!newPlayer.name.trim()) return
+    if (!newPlayer.name.trim() || !newPlayer.pin.trim()) {
+      return alert('El nombre y el PIN son obligatorios')
+    }
+    
     const { error } = await supabase.from('players').insert({
       team_id: teamId,
       name: newPlayer.name.trim(),
       number: newPlayer.number ? parseInt(newPlayer.number) : null,
       position: newPlayer.position || null,
+      pin: newPlayer.pin, // <-- Guardamos el PIN
     })
+    
     if (error) return alert(error.message)
-    setNewPlayer({ name: '', number: '', position: '' })
+    
+    // Limpiamos el formulario
+    setNewPlayer({ name: '', number: '', position: '', pin: '' })
     load()
   }
 
@@ -69,25 +78,33 @@ export default function TeamDetail() {
       <div className="flex gap-2">
         <button
           onClick={() => setTab('players')}
-          className={`flex-1 py-2 rounded-lg font-medium ${tab === 'players' ? 'bg-emerald-600' : 'bg-slate-800'}`}
+          className={`flex-1 py-2 rounded-lg font-medium transition ${tab === 'players' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
         >Jugadores ({players.length})</button>
         <button
           onClick={() => setTab('trainings')}
-          className={`flex-1 py-2 rounded-lg font-medium ${tab === 'trainings' ? 'bg-emerald-600' : 'bg-slate-800'}`}
+          className={`flex-1 py-2 rounded-lg font-medium transition ${tab === 'trainings' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
         >Entrenamientos ({trainings.length})</button>
       </div>
 
       {tab === 'players' && (
         <>
-          <form onSubmit={addPlayer} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2">
-            <p className="text-sm font-medium">Agregar jugador</p>
-            <div className="grid grid-cols-4 gap-2">
+          <form onSubmit={addPlayer} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
+            <p className="text-sm font-medium border-b border-slate-800 pb-2">Agregar jugador</p>
+            <div className="grid grid-cols-2 gap-2">
               <input
                 placeholder="Nombre" required
                 value={newPlayer.name}
                 onChange={e => setNewPlayer({ ...newPlayer, name: e.target.value })}
-                className="col-span-2 px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
+                className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
               />
+              <input
+                placeholder="Posición (opcional)"
+                value={newPlayer.position}
+                onChange={e => setNewPlayer({ ...newPlayer, position: e.target.value })}
+                className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
               <input
                 placeholder="#" type="number"
                 value={newPlayer.number}
@@ -95,26 +112,27 @@ export default function TeamDetail() {
                 className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
               />
               <input
-                placeholder="Posición"
-                value={newPlayer.position}
-                onChange={e => setNewPlayer({ ...newPlayer, position: e.target.value })}
+                placeholder="PIN de 4 dígitos" type="text" maxLength={4} required
+                value={newPlayer.pin}
+                onChange={e => setNewPlayer({ ...newPlayer, pin: e.target.value.replace(/\D/g, '') })}
                 className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
               />
             </div>
-            <button className="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-medium">+ Agregar</button>
+            <button className="w-full py-2 mt-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-medium">+ Agregar</button>
           </form>
 
           <div className="space-y-2">
             {players.map(p => (
               <div key={p.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
                 <div>
-                  <p className="font-medium">
-                    {p.number && <span className="text-slate-400">#{p.number} </span>}
+                  <p className="font-medium flex items-center gap-2">
+                    {p.number && <span className="bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded">#{p.number}</span>}
                     {p.name}
+                    <span className="text-xs text-slate-500 font-normal">| PIN: {p.pin}</span>
                   </p>
-                  {p.position && <p className="text-xs text-slate-500">{p.position}</p>}
+                  {p.position && <p className="text-xs text-slate-500 mt-1">{p.position}</p>}
                 </div>
-                <button onClick={() => removePlayer(p.id)} className="text-xs text-rose-400 hover:text-rose-300 px-2">Eliminar</button>
+                <button onClick={() => removePlayer(p.id)} className="text-xs text-rose-400 hover:text-rose-300 px-2 py-1">Eliminar</button>
               </div>
             ))}
           </div>
@@ -143,7 +161,7 @@ export default function TeamDetail() {
                     'bg-amber-900 text-amber-300'
                   }`}>{t.status}</span>
                 </div>
-                {t.start_time && <p className="text-sm text-slate-400">{t.start_time.slice(0,5)}</p>}
+                {t.start_time && <p className="text-sm text-slate-400 mt-1">{t.start_time.slice(0,5)}</p>}
                 {t.location && <p className="text-sm text-slate-400">📍 {t.location}</p>}
               </div>
             ))}
