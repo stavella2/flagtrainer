@@ -12,11 +12,12 @@ export default function TeamDetail() {
   const [attendanceRecords, setAttendanceRecords] = useState([])
   const [loading, setLoading] = useState(true)
   
-  // Estado para el formulario (crear Y editar)
   const [newPlayer, setNewPlayer] = useState({ name: '', number: '', position: '', pin: '' })
   const [editingId, setEditingId] = useState(null)
-  
   const [expandedPlayer, setExpandedPlayer] = useState(null)
+  
+  // Estado para el selector de lesión
+  const [editingInjury, setEditingInjury] = useState(null)
 
   useEffect(() => { load() }, [teamId])
 
@@ -40,9 +41,7 @@ export default function TeamDetail() {
 
   async function handleSubmitPlayer(e) {
     e.preventDefault()
-    if (!newPlayer.name.trim() || !newPlayer.pin.trim()) {
-      return alert('El nombre y el PIN son obligatorios')
-    }
+    if (!newPlayer.name.trim() || !newPlayer.pin.trim()) return alert('El nombre y el PIN son obligatorios')
     
     const playerData = {
       name: newPlayer.name.trim(),
@@ -65,12 +64,7 @@ export default function TeamDetail() {
   }
 
   function handleEditClick(p) {
-    setNewPlayer({
-      name: p.name,
-      number: p.number || '',
-      position: p.position || '',
-      pin: p.pin || '',
-    })
+    setNewPlayer({ name: p.name, number: p.number || '', position: p.position || '', pin: p.pin || '' })
     setEditingId(p.id)
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
@@ -86,20 +80,9 @@ export default function TeamDetail() {
     load()
   }
 
-  // Manejar la lesión
-  async function toggleInjury(player) {
-    const date = prompt('¿Hasta qué fecha estará lesionado? (Formato: AAAA-MM-DD)\nDejalo vacío para darlo de alta y que vuelva a jugar.', player.injured_until || '')
-    if (date !== null) {
-      await supabase.from('players').update({ injured_until: date || null }).eq('id', player.id)
-      load()
-    }
-  }
-
   async function createTraining() {
     const { data, error } = await supabase.from('trainings').insert({
-      team_id: teamId,
-      date: new Date().toISOString().slice(0, 10),
-      status: 'draft',
+      team_id: teamId, date: new Date().toISOString().slice(0, 10), status: 'draft',
     }).select().single()
     if (error) return alert(error.message)
     nav(`/coach/team/${teamId}/training/${data.id}`)
@@ -152,7 +135,6 @@ export default function TeamDetail() {
 
       {tab === 'players' && (
         <>
-          {/* FORMULARIO DE CREAR / EDITAR */}
           <form onSubmit={handleSubmitPlayer} className={`border rounded-xl p-4 space-y-3 transition ${editingId ? 'bg-amber-950/30 border-amber-600' : 'bg-slate-900 border-slate-800'}`}>
             <div className="flex justify-between items-center border-b border-slate-800 pb-2">
               <p className="text-sm font-medium">{editingId ? '✏️ Editando jugador' : 'Agregar jugador'}</p>
@@ -175,8 +157,8 @@ export default function TeamDetail() {
             {players.map(p => {
               const stats = getPlayerStats(p.id)
               const isExpanded = expandedPlayer === p.id
-              // Verificamos si está lesionado
               const isInjured = p.injured_until && new Date(p.injured_until) >= new Date(new Date().setHours(0,0,0,0))
+              const isEditingThisInjury = editingInjury === p.id
 
               return (
                 <div key={p.id} className={`border rounded-xl overflow-hidden transition ${isInjured ? 'bg-rose-950/20 border-rose-900' : 'bg-slate-900 border-slate-800'}`}>
@@ -193,10 +175,27 @@ export default function TeamDetail() {
                     <div className="flex items-center gap-1">
                       <button onClick={() => setExpandedPlayer(isExpanded ? null : p.id)} className={`text-xs px-2 py-1.5 rounded transition ${isExpanded ? 'bg-emerald-700 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>📊</button>
                       <button onClick={() => handleEditClick(p)} className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 px-2 py-1.5 rounded transition">✏️</button>
-                      <button onClick={() => toggleInjury(p)} className={`text-xs px-2 py-1.5 rounded transition ${isInjured ? 'bg-rose-900 text-rose-200 hover:bg-rose-800' : 'bg-slate-800 hover:bg-slate-700 text-slate-400'}`} title="Marcar lesión">🤕</button>
+                      <button onClick={() => setEditingInjury(isEditingThisInjury ? null : p.id)} className={`text-xs px-2 py-1.5 rounded transition ${isInjured ? 'bg-rose-900 text-rose-200 hover:bg-rose-800' : 'bg-slate-800 hover:bg-slate-700 text-slate-400'}`} title="Marcar lesión">🤕</button>
                       <button onClick={() => removePlayer(p.id)} className="text-xs text-rose-400 hover:text-rose-300 px-2 py-1.5">✕</button>
                     </div>
                   </div>
+
+                  {/* SELECTOR DE LESIÓN EN LÍNEA */}
+                  {isEditingThisInjury && (
+                    <div className="bg-slate-950 p-3 border-t border-slate-800 flex items-center gap-2">
+                      <input 
+                        type="date" 
+                        defaultValue={p.injured_until || ''} 
+                        onChange={async (e) => {
+                          await supabase.from('players').update({ injured_until: e.target.value || null }).eq('id', p.id)
+                          setEditingInjury(null)
+                          load()
+                        }}
+                        className="bg-slate-800 border border-slate-700 text-sm px-2 py-1.5 rounded text-white outline-none"
+                      />
+                      <span className="text-xs text-slate-400">¿Hasta cuándo estará lesionado?</span>
+                    </div>
+                  )}
 
                   {/* Panel de Estadísticas Desplegable */}
                   {isExpanded && (

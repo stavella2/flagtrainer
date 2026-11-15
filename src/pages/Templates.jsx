@@ -18,6 +18,10 @@ export default function Templates() {
   const [isAdmin, setIsAdmin] = useState(false)
   const [filter, setFilter] = useState('all')
 
+  // Estados para el Modal
+  const [selectedTemplate, setSelectedTemplate] = useState(null)
+  const [userTeams, setUserTeams] = useState([])
+
   useEffect(() => { load() }, [])
 
   async function load() {
@@ -31,43 +35,38 @@ export default function Templates() {
   }
 
   async function approveTemplate(id) {
-    if (!confirm('¿Aprobar esta plantilla para que todos la usen?')) return
     await supabase.from('templates').update({ status: 'approved' }).eq('id', id)
     load()
   }
 
-  async function useTemplate(t) {
+  // Abrir el modal
+  async function openUseTemplate(t) {
     const { data: { user } } = await supabase.auth.getUser()
     const { data: teams } = await supabase.from('teams').select('id, name').eq('coach_id', user.id)
     
     if (!teams || teams.length === 0) return alert('Primero tenés que crear un equipo.')
+    setUserTeams(teams)
+    setSelectedTemplate(t)
+  }
 
-    const teamNames = teams.map((team, i) => `${i + 1}. ${team.name}`).join('\n')
-    const selection = prompt(`¿A qué equipo querés agregar esta plantilla?\n\n${teamNames}\n\nEscribí el número:`)
-    if (!selection) return
-    const teamIndex = parseInt(selection) - 1
-    if (!teams[teamIndex]) return alert('Opción inválida')
+  // Asignar al equipo seleccionado
+  async function assignTemplateToTeam(teamId, teamName) {
+    const t = selectedTemplate
+    setSelectedTemplate(null) // Cerramos el modal
 
-    const selectedTeam = teams[teamIndex]
-    const { data: drafts } = await supabase.from('trainings').select('id').eq('team_id', selectedTeam.id).eq('status', 'draft').order('created_at', { ascending: false }).limit(1)
-    if (!drafts || drafts.length === 0) return alert(`El equipo ${selectedTeam.name} no tiene entrenamientos en borrador. Creá uno primero.`)
+    const { data: drafts } = await supabase.from('trainings').select('id').eq('team_id', teamId).eq('status', 'draft').order('created_at', { ascending: false }).limit(1)
+    if (!drafts || drafts.length === 0) return alert(`El equipo ${teamName} no tiene entrenamientos en borrador. Creá uno primero.`)
 
     const trainingId = drafts[0].id
     const { count } = await supabase.from('training_blocks').select('*', { count: 'exact', head: true }).eq('training_id', trainingId)
 
     await supabase.from('training_blocks').insert({
-      training_id: trainingId,
-      type: t.type,
-      title: t.title,
-      description: t.description,
-      duration_min: t.duration_min || 10, 
-      diagram: t.diagram || {},
-      video_url: t.video_url || null,
-      order_index: count || 0
+      training_id: trainingId, type: t.type, title: t.title, description: t.description,
+      duration_min: t.duration_min || 10, diagram: t.diagram || {}, video_url: t.video_url || null, order_index: count || 0
     })
 
-    alert(`¡Plantilla agregada al borrador de ${selectedTeam.name}!`)
-    nav(`/coach/team/${selectedTeam.id}/training/${trainingId}`)
+    alert(`¡Plantilla agregada al borrador de ${teamName}!`)
+    nav(`/coach/team/${teamId}/training/${trainingId}`)
   }
 
   const filteredTemplates = filter === 'all' ? templates : templates.filter(t => t.type === filter)
@@ -121,11 +120,35 @@ export default function Templates() {
             )}
 
             {t.status === 'approved' && (
-              <button onClick={() => useTemplate(t)} className="mt-3 w-full py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-sm font-medium transition">+ Usar esta plantilla</button>
+              <button onClick={() => openUseTemplate(t)} className="mt-3 w-full py-2 rounded-lg bg-emerald-700 hover:bg-emerald-600 text-sm font-medium transition">+ Usar esta plantilla</button>
             )}
           </div>
         ))}
       </div>
+
+      {/* MODAL PARA ELEGIR EQUIPO */}
+      {selectedTemplate && (
+        <div className="fixed inset-0 bg-black/70 flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-sm space-y-4 shadow-2xl">
+            <h2 className="text-lg font-bold">¿A qué equipo lo agregamos?</h2>
+            <p className="text-xs text-slate-400">Se agregará al último entrenamiento en borrador del equipo seleccionado.</p>
+            <div className="space-y-2 max-h-60 overflow-y-auto">
+              {userTeams.map(team => (
+                <button
+                  key={team.id}
+                  onClick={() => assignTemplateToTeam(team.id, team.name)}
+                  className="w-full text-left px-4 py-3 bg-slate-800 hover:bg-slate-700 rounded-lg font-medium transition"
+                >
+                  {team.name}
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setSelectedTemplate(null)} className="w-full py-2 text-sm text-slate-400 hover:text-white transition">
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
