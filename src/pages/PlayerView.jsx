@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { getYouTubeEmbedUrl } from '../lib/utils'
+import DrillViewer from '../components/DrillViewer' // <-- IMPORTAMOS EL VISOR
 
 const BLOCK_LABELS = {
   warmup: '🔥 Calentamiento', drill: '🎯 Drills', offense: '⚔️ Ofensiva',
@@ -15,12 +17,14 @@ export default function PlayerView() {
   const [msg, setMsg] = useState('')
   const [history, setHistory] = useState([])
 
-  // Sesión del jugador
   const [player, setPlayer] = useState(null)
-  const [identifier, setIdentifier] = useState('') // Número o nombre
+  const [identifier, setIdentifier] = useState('')
   const [pin, setPin] = useState('')
   const [loginError, setLoginError] = useState('')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
+
+  // Estado para saber qué bloque está abierto
+  const [openBlock, setOpenBlock] = useState(null)
 
   useEffect(() => {
     const savedPlayer = localStorage.getItem(`player_${token}`)
@@ -28,7 +32,7 @@ export default function PlayerView() {
     
     if (savedPlayer && savedPin) {
       setPlayer(JSON.parse(savedPlayer))
-      setPin(savedPin) // <-- Recuperamos el PIN guardado
+      setPin(savedPin)
     }
     load()
   }, [token])
@@ -43,7 +47,6 @@ export default function PlayerView() {
     setData(teamData)
     setRsvps(rsvpsData || [])
     
-    // Si ya hay un jugador logueado (o al loguearse), traemos su historial
     const savedPlayer = localStorage.getItem(`player_${token}`)
     const savedPin = localStorage.getItem(`pin_${token}`)
     if (savedPlayer && savedPin) {
@@ -56,6 +59,7 @@ export default function PlayerView() {
     
     setLoading(false)
   }
+
   async function handleLogin(e) {
     e.preventDefault()
     setIsLoggingIn(true); setLoginError('')
@@ -69,7 +73,6 @@ export default function PlayerView() {
       localStorage.setItem(`player_${token}`, JSON.stringify(res.player))
       localStorage.setItem(`pin_${token}`, pin)
       
-      // Traer el historial acá mismo
       const { data: histData } = await supabase.rpc('get_player_history_by_token', {
         p_token: token, p_player_id: res.player.id, p_pin: pin
       })
@@ -77,11 +80,12 @@ export default function PlayerView() {
     }
     setIsLoggingIn(false)
   }
+
   function logout() {
     setPlayer(null)
     setPin('')
     localStorage.removeItem(`player_${token}`)
-    localStorage.removeItem(`pin_${token}`) // <-- Borramos el PIN al salir
+    localStorage.removeItem(`pin_${token}`)
   }
 
   async function confirm(status) {
@@ -96,7 +100,6 @@ export default function PlayerView() {
   if (loading) return <div className="p-6 text-slate-400">Cargando…</div>
   if (!data) return <div className="p-6 text-red-400">{msg || 'Error'}</div>
 
-  // Si no está logueado, mostramos la pantalla de Login
   if (!player) {
     return (
       <div className="max-w-md mx-auto p-6 min-h-screen flex flex-col justify-center">
@@ -127,7 +130,6 @@ export default function PlayerView() {
     )
   }
 
-  // Si está logueado, mostramos el entrenamiento
   const t = data.next_training
   const myRsvp = rsvps.find(r => r.player_id === player.id)
 
@@ -151,16 +153,69 @@ export default function PlayerView() {
               {t.start_time && ` · ${t.start_time.slice(0,5)}`}
             </p>
             {t.location && <p className="text-sm text-slate-400">📍 {t.location}</p>}
+            
             <div className="space-y-2 pt-2">
-              {t.blocks.map(b => (
-                <div key={b.id} className="flex items-start justify-between gap-3 border-t border-slate-800 pt-2">
-                  <div>
-                    <p className="text-sm font-medium">{BLOCK_LABELS[b.type] || b.type}</p>
-                    <p className="text-xs text-slate-400">{b.title}</p>
+              {t.blocks.map(b => {
+                const isOpen = openBlock === b.id;
+                const hasDetails = b.description || b.video_url || (b.diagram && b.diagram.items && b.diagram.items.length > 0);
+
+                return (
+                  <div key={b.id} className="border-t border-slate-800 pt-2">
+                    {/* Cabecera del bloque (Clickable si tiene detalles) */}
+                    <div 
+                      onClick={() => hasDetails && setOpenBlock(isOpen ? null : b.id)}
+                      className={`flex items-start justify-between gap-3 p-1 rounded transition ${hasDetails ? 'cursor-pointer hover:bg-slate-800/50' : ''}`}
+                    >
+                      <div>
+                        <p className="text-sm font-medium">{BLOCK_LABELS[b.type] || b.type}</p>
+                        <p className="text-xs text-slate-400">{b.title}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-400 whitespace-nowrap">{b.duration_min} min</span>
+                        {hasDetails && <span className="text-xs text-slate-500">{isOpen ? '▲' : '▼'}</span>}
+                      </div>
+                    </div>
+
+                    {/* Detalles del bloque (Acordeón) */}
+                    {isOpen && (
+                      <div className="mt-2 pl-1 space-y-3 pb-2">
+                        {b.description && <p className="text-xs text-slate-300 bg-slate-800/30 p-2 rounded">{b.description}</p>}
+                        
+                        {/* VISOR DE PIZARRA */}
+                        {b.diagram && b.diagram.items && b.diagram.items.length > 0 && (
+                          <div>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Pizarra del ejercicio</p>
+                            <DrillViewer data={b.diagram} />
+                          </div>
+                        )}
+
+                        {/* VIDEO DE YOUTUBE */}
+                        {b.video_url && (
+                          <div>
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Video de referencia</p>
+                            {getYouTubeEmbedUrl(b.video_url) ? (
+                              <div className="aspect-video w-full rounded-lg overflow-hidden border border-slate-700">
+                                <iframe 
+                                  width="100%" 
+                                  height="100%" 
+                                  src={getYouTubeEmbedUrl(b.video_url)} 
+                                  title={b.title} 
+                                  frameBorder="0" 
+                                  allowFullScreen
+                                ></iframe>
+                              </div>
+                            ) : (
+                              <a href={b.video_url} target="_blank" rel="noreferrer" className="text-sm text-emerald-400 underline break-all">
+                                Abrir video externo
+                              </a>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  <span className="text-xs text-slate-400 whitespace-nowrap">{b.duration_min} min</span>
-                </div>
-              ))}
+                )
+              })}
             </div>
           </div>
 
@@ -180,7 +235,7 @@ export default function PlayerView() {
           </div>
         </>
       )}
-      {/* Historial de entrenamientos */}
+
       {history.length > 0 && (
         <div className="pt-4 space-y-2">
           <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold">Entrenamientos anteriores</p>

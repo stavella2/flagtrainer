@@ -4,6 +4,7 @@ import CoachDashboard from './pages/CoachDashboard'
 import TeamDetail from './pages/TeamDetail'
 import TrainingEditor from './pages/TrainingEditor'
 import PlayerView from './pages/PlayerView'
+import Templates from './pages/Templates'
 
 export default function App() {
   return (
@@ -13,6 +14,7 @@ export default function App() {
       <Route path="/coach/team/:teamId" element={<TeamDetail />} />
       <Route path="/coach/team/:teamId/training/:trainingId" element={<TrainingEditor />} />
       <Route path="/t/:token" element={<PlayerView />} />
+      <Route path="/coach/templates" element={<Templates />} />
     </Routes>
   )
 }

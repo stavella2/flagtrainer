@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import DrillDesigner from '../components/DrillDesigner'
+import { getYouTubeEmbedUrl } from '../lib/utils'
 
 const BLOCK_TYPES = [
   { value: 'warmup',    label: '🔥 Calentamiento' },
@@ -21,8 +23,8 @@ export default function TrainingEditor() {
   const [loading, setLoading] = useState(true)
   const [showAttendance, setShowAttendance] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [activeDiagram, setActiveDiagram] = useState(null)
 
-  // Buffer de debounce por campo: { "location": timeoutId, "notes": timeoutId, ... }
   const debounceRef = useRef({})
 
   useEffect(() => { load() }, [trainingId])
@@ -40,15 +42,9 @@ export default function TrainingEditor() {
     setLoading(false)
   }
 
-  // --- Cambio local inmediato + guardado con debounce ---
   function updateField(field, value) {
-    // 1) actualizamos el estado local YA (para que el input responda fluido)
     setTraining(t => ({ ...t, [field]: value }))
-
-    // 2) debounce: cancelamos el guardado anterior de este campo
     if (debounceRef.current[field]) clearTimeout(debounceRef.current[field])
-
-    // 3) programamos el guardado a Supabase 500ms después de la última tecla
     debounceRef.current[field] = setTimeout(async () => {
       setSaving(true)
       await supabase.from('trainings').update({ [field]: value }).eq('id', trainingId)
@@ -56,7 +52,6 @@ export default function TrainingEditor() {
     }, 500)
   }
 
-  // Guardado inmediato (para publicar/cerrar, sin debounce)
   async function saveTraining(patch) {
     setSaving(true)
     await supabase.from('trainings').update(patch).eq('id', trainingId)
@@ -78,9 +73,7 @@ export default function TrainingEditor() {
   }
 
   function updateBlockDebounced(id, patch, fieldKey) {
-    // aplicamos local al toque
     updateBlockLocal(id, patch)
-    // debounce por bloque+campo
     const key = `block_${id}_${fieldKey}`
     if (debounceRef.current[key]) clearTimeout(debounceRef.current[key])
     debounceRef.current[key] = setTimeout(async () => {
@@ -125,6 +118,29 @@ export default function TrainingEditor() {
     alert('Entrenamiento publicado ✅ El equipo ya lo puede ver')
   }
 
+  async function saveAsTemplate() {
+    const select = document.getElementById('template-block-select')
+    if (!select) return
+    const block = blocks[select.value]
+    const { data: { user } } = await supabase.auth.getUser()
+    
+    setSaving(true)
+    const { error } = await supabase.from('templates').insert({
+      coach_id: user.id,
+      title: block.title,
+      description: block.description,
+      type: block.type,
+      duration_min: block.duration_min,
+      diagram: block.diagram || {},
+      video_url: block.video_url || null,
+      status: 'pending'
+    })
+    setSaving(false)
+
+    if (error) return alert(error.message)
+    alert('¡Plantilla guardada! El admin debe aprobarla para que sea pública.')
+  }
+
   if (loading) return <div className="p-6 text-slate-400">Cargando…</div>
   if (!training) return <div className="p-6 text-red-400">Entrenamiento no encontrado</div>
 
@@ -147,71 +163,42 @@ export default function TrainingEditor() {
         }`}>{training.status}</span>
       </div>
 
-      {/* Datos generales */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
         <div className="grid grid-cols-2 gap-2">
           <div>
             <label className="text-xs text-slate-500">Fecha</label>
-            <input
-              type="date" value={training.date || ''}
-              onChange={e => updateField('date', e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
-            />
+            <input type="date" value={training.date || ''} onChange={e => updateField('date', e.target.value)} className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700" />
           </div>
           <div>
             <label className="text-xs text-slate-500">Hora inicio</label>
-            <input
-              type="time" value={training.start_time?.slice(0,5) || ''}
-              onChange={e => updateField('start_time', e.target.value || null)}
-              className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
-            />
+            <input type="time" value={training.start_time?.slice(0,5) || ''} onChange={e => updateField('start_time', e.target.value || null)} className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700" />
           </div>
         </div>
         <div>
           <label className="text-xs text-slate-500">Lugar</label>
-          <input
-            type="text" placeholder="Cancha, dirección…" value={training.location || ''}
-            onChange={e => updateField('location', e.target.value)}
-            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
-          />
+          <input type="text" placeholder="Cancha, dirección…" value={training.location || ''} onChange={e => updateField('location', e.target.value)} className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700" />
         </div>
         <div>
           <label className="text-xs text-slate-500">Notas</label>
-          <textarea
-            placeholder="Objetivo del entrenamiento, aclaraciones…" rows={2}
-            value={training.notes || ''}
-            onChange={e => updateField('notes', e.target.value)}
-            className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
-          />
+          <textarea placeholder="Objetivo del entrenamiento, aclaraciones…" rows={2} value={training.notes || ''} onChange={e => updateField('notes', e.target.value)} className="w-full px-3 py-2 rounded-lg bg-slate-800 border border-slate-700" />
         </div>
       </div>
 
-      {/* Bloques */}
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold">Bloques ({blocks.length})</h2>
           <span className="text-xs text-slate-400">Total: {totalMin} min</span>
         </div>
 
-        {blocks.length === 0 && (
-          <p className="text-sm text-slate-500 text-center py-4">Todavía no hay bloques. Agregá el primero.</p>
-        )}
+        {blocks.length === 0 && <p className="text-sm text-slate-500 text-center py-4">Todavía no hay bloques. Agregá el primero.</p>}
 
         {blocks.map((b, idx) => (
           <div key={b.id} className="border border-slate-800 rounded-lg p-3 space-y-2 bg-slate-950">
             <div className="flex items-center gap-2">
-              <select
-                value={b.type}
-                onChange={e => updateBlockDebounced(b.id, { type: e.target.value }, 'type')}
-                className="px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm"
-              >
+              <select value={b.type} onChange={e => updateBlockDebounced(b.id, { type: e.target.value }, 'type')} className="px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm">
                 {BLOCK_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
               </select>
-              <input
-                type="number" min={0} value={b.duration_min}
-                onChange={e => updateBlockDebounced(b.id, { duration_min: parseInt(e.target.value) || 0 }, 'duration')}
-                className="w-20 px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm"
-              />
+              <input type="number" min={0} value={b.duration_min} onChange={e => updateBlockDebounced(b.id, { duration_min: parseInt(e.target.value) || 0 }, 'duration')} className="w-20 px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm" />
               <span className="text-xs text-slate-500">min</span>
               <div className="ml-auto flex gap-1">
                 <button onClick={() => moveBlock(b.id, -1)} disabled={idx === 0} className="px-2 py-1 text-xs bg-slate-800 rounded disabled:opacity-30">↑</button>
@@ -219,32 +206,58 @@ export default function TrainingEditor() {
                 <button onClick={() => removeBlock(b.id)} className="px-2 py-1 text-xs bg-rose-900 text-rose-300 rounded">✕</button>
               </div>
             </div>
-            <input
-              type="text" placeholder="Título del bloque" value={b.title}
-              onChange={e => updateBlockDebounced(b.id, { title: e.target.value }, 'title')}
-              className="w-full px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm font-medium"
-            />
-            <textarea
-              placeholder="Descripción / drills concretos…" rows={2} value={b.description || ''}
-              onChange={e => updateBlockDebounced(b.id, { description: e.target.value }, 'description')}
-              className="w-full px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm"
-            />
+            <input type="text" placeholder="Título del bloque" value={b.title} onChange={e => updateBlockDebounced(b.id, { title: e.target.value }, 'title')} className="w-full px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm font-medium" />
+            <textarea placeholder="Descripción / drills concretos…" rows={2} value={b.description || ''} onChange={e => updateBlockDebounced(b.id, { description: e.target.value }, 'description')} className="w-full px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm" />
+
+            {/* Link de Video */}
+            <div className="pt-2">
+              <input
+                type="text" 
+                placeholder="Link de video de YouTube (opcional)" 
+                value={b.video_url || ''}
+                onChange={e => updateBlockDebounced(b.id, { video_url: e.target.value }, 'video_url')}
+                className="w-full px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm"
+              />
+              {b.video_url && getYouTubeEmbedUrl(b.video_url) && (
+                <div className="mt-2 aspect-video w-full rounded-lg overflow-hidden border border-slate-700">
+                  <iframe width="100%" height="100%" src={getYouTubeEmbedUrl(b.video_url)} title="Video del ejercicio" frameBorder="0" allowFullScreen></iframe>
+                </div>
+              )}
+            </div>
+
+            {/* Pizarra */}
+            <div className="pt-2">
+              <button onClick={() => setActiveDiagram(activeDiagram === b.id ? null : b.id)} className="text-xs px-2 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-emerald-400 font-medium transition">
+                {activeDiagram === b.id ? '▲ Ocultar Pizarra' : '🎨 Dibujar Ejercicio'}
+              </button>
+              {activeDiagram === b.id && (
+                <div className="mt-2">
+                  <DrillDesigner initialData={b.diagram} onChange={(newDiagram) => updateBlockDebounced(b.id, { diagram: newDiagram }, 'diagram')} />
+                </div>
+              )}
+            </div>
           </div>
         ))}
 
-        <button onClick={addBlock} className="w-full py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm font-medium">
-          + Agregar bloque
-        </button>
+        <button onClick={addBlock} className="w-full py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-sm font-medium">+ Agregar bloque</button>
+
+        {blocks.length > 0 && (
+          <div className="pt-4 mt-2 border-t border-slate-800">
+            <p className="text-xs text-slate-500 mb-2">¿Querés reutilizar estos bloques en el futuro?</p>
+            <div className="flex gap-2">
+              <select id="template-block-select" className="flex-1 px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm">
+                {blocks.map((b, i) => <option key={b.id} value={i}>Bloque {i+1}: {b.title}</option>)}
+              </select>
+              <button onClick={saveAsTemplate} className="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 rounded text-sm font-medium whitespace-nowrap">💾 Guardar como plantilla</button>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Publicar */}
       {training.status === 'draft' && (
-        <button onClick={publish} className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">
-          Publicar para el equipo
-        </button>
+        <button onClick={publish} className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">Publicar para el equipo</button>
       )}
 
-      {/* RSVPs */}
       {training.status !== 'draft' && (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-2">
           <div className="flex items-center justify-between">
@@ -255,24 +268,15 @@ export default function TrainingEditor() {
             {players.map(p => {
               const r = rsvps.find(r => r.player_id === p.id)
               const label = !r ? '—' : r.status === 'yes' ? '✅' : r.status === 'maybe' ? '❔' : '❌'
-              return (
-                <div key={p.id} className="flex justify-between">
-                  <span>{p.number && `#${p.number} `}{p.name}</span>
-                  <span>{label}</span>
-                </div>
-              )
+              return <div key={p.id} className="flex justify-between"><span>{p.number && `#${p.number} `}{p.name}</span><span>{label}</span></div>
             })}
           </div>
         </div>
       )}
 
-      {/* Asistencia real */}
       {training.status !== 'draft' && (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-          <button
-            onClick={() => setShowAttendance(s => !s)}
-            className="w-full flex items-center justify-between font-semibold"
-          >
+          <button onClick={() => setShowAttendance(s => !s)} className="w-full flex items-center justify-between font-semibold">
             <span>Marcar asistencia</span>
             <span className="text-slate-400">{showAttendance ? '▲' : '▼'}</span>
           </button>
@@ -285,28 +289,14 @@ export default function TrainingEditor() {
                   <div key={p.id} className="flex items-center justify-between gap-2">
                     <span className="text-sm">{p.number && `#${p.number} `}{p.name}</span>
                     <div className="flex gap-1">
-                      {[
-                        { v: 'present', l: '✅' },
-                        { v: 'late',    l: '🕐' },
-                        { v: 'absent',  l: '❌' },
-                        { v: 'injured', l: '🤕' },
-                      ].map(opt => (
-                        <button
-                          key={opt.v}
-                          onClick={() => markAttendance(p.id, opt.v)}
-                          className={`px-2 py-1 rounded text-sm ${status === opt.v ? 'bg-emerald-600' : 'bg-slate-800'}`}
-                        >{opt.l}</button>
+                      {[{ v: 'present', l: '✅' },{ v: 'late', l: '🕐' },{ v: 'absent', l: '❌' },{ v: 'injured', l: '🤕' }].map(opt => (
+                        <button key={opt.v} onClick={() => markAttendance(p.id, opt.v)} className={`px-2 py-1 rounded text-sm ${status === opt.v ? 'bg-emerald-600' : 'bg-slate-800'}`}>{opt.l}</button>
                       ))}
                     </div>
                   </div>
                 )
               })}
-              <button
-                onClick={() => saveTraining({ status: 'done' })}
-                className="w-full mt-2 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm font-medium"
-              >
-                Cerrar entrenamiento (marcar como realizado)
-              </button>
+              <button onClick={() => saveTraining({ status: 'done' })} className="w-full mt-2 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-sm font-medium">Cerrar entrenamiento (marcar como realizado)</button>
             </div>
           )}
         </div>

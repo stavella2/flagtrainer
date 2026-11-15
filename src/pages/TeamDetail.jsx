@@ -9,10 +9,14 @@ export default function TeamDetail() {
   const [tab, setTab] = useState('players')
   const [players, setPlayers] = useState([])
   const [trainings, setTrainings] = useState([])
+  const [attendanceRecords, setAttendanceRecords] = useState([])
   const [loading, setLoading] = useState(true)
   
-  // Estado para el nuevo jugador, ahora con PIN
+  // Estado para el nuevo jugador
   const [newPlayer, setNewPlayer] = useState({ name: '', number: '', position: '', pin: '' })
+  
+  // Estado para el panel de estadísticas desplegable
+  const [expandedPlayer, setExpandedPlayer] = useState(null)
 
   useEffect(() => { load() }, [teamId])
 
@@ -23,7 +27,15 @@ export default function TeamDetail() {
       supabase.from('players').select('*').eq('team_id', teamId).order('name'),
       supabase.from('trainings').select('*').eq('team_id', teamId).order('date', { ascending: false }),
     ])
-    setTeam(t); setPlayers(p || []); setTrainings(tr || [])
+    
+    // Traemos toda la asistencia real de este equipo
+    const { data: att } = await supabase
+      .from('attendance')
+      .select('*, trainings!inner(team_id, status)')
+      .eq('trainings.team_id', teamId)
+      .eq('trainings.status', 'done') // Solo contamos entrenamientos cerrados
+
+    setTeam(t); setPlayers(p || []); setTrainings(tr || []); setAttendanceRecords(att || [])
     setLoading(false)
   }
 
@@ -38,12 +50,10 @@ export default function TeamDetail() {
       name: newPlayer.name.trim(),
       number: newPlayer.number ? parseInt(newPlayer.number) : null,
       position: newPlayer.position || null,
-      pin: newPlayer.pin, // <-- Guardamos el PIN
+      pin: newPlayer.pin,
     })
     
     if (error) return alert(error.message)
-    
-    // Limpiamos el formulario
     setNewPlayer({ name: '', number: '', position: '', pin: '' })
     load()
   }
@@ -62,6 +72,32 @@ export default function TeamDetail() {
     }).select().single()
     if (error) return alert(error.message)
     nav(`/coach/team/${teamId}/training/${data.id}`)
+  }
+
+  // Función para calcular las stats de un jugador
+  function getPlayerStats(playerId) {
+    const records = attendanceRecords.filter(a => a.player_id === playerId)
+    const total = records.length
+    const present = records.filter(r => r.status === 'present' || r.status === 'late').length
+    const absent = records.filter(r => r.status === 'absent').length
+    const injured = records.filter(r => r.status === 'injured').length
+    
+    // Calcular racha (ordenamos por fecha de entrenamiento descendente)
+    // Necesitamos cruzar con el array de trainings para saber la fecha
+    const sortedRecords = records.map(r => {
+      const training = trainings.find(t => t.id === r.training_id)
+      return { ...r, date: training?.date }
+    }).sort((a, b) => new Date(b.date) - new Date(a.date))
+
+    let streak = 0
+    for (const r of sortedRecords) {
+      if (r.status === 'present' || r.status === 'late') streak++
+      else break // Si falta o está lesionado, se corta la racha
+    }
+
+    const percentage = total > 0 ? Math.round((present / total) * 100) : 0
+
+    return { total, present, absent, injured, percentage, streak }
   }
 
   if (loading) return <div className="p-6 text-slate-400">Cargando…</div>
@@ -122,19 +158,58 @@ export default function TeamDetail() {
           </form>
 
           <div className="space-y-2">
-            {players.map(p => (
-              <div key={p.id} className="bg-slate-900 border border-slate-800 rounded-xl p-3 flex items-center justify-between">
-                <div>
-                  <p className="font-medium flex items-center gap-2">
-                    {p.number && <span className="bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded">#{p.number}</span>}
-                    {p.name}
-                    <span className="text-xs text-slate-500 font-normal">| PIN: {p.pin}</span>
-                  </p>
-                  {p.position && <p className="text-xs text-slate-500 mt-1">{p.position}</p>}
+            {players.map(p => {
+              const stats = getPlayerStats(p.id)
+              const isExpanded = expandedPlayer === p.id
+
+              return (
+                <div key={p.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
+                  {/* Fila del jugador */}
+                  <div className="p-3 flex items-center justify-between">
+                    <div>
+                      <p className="font-medium flex items-center gap-2">
+                        {p.number && <span className="bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded">#{p.number}</span>}
+                        {p.name}
+                        <span className="text-xs text-slate-500 font-normal">| PIN: {p.pin}</span>
+                      </p>
+                      {p.position && <p className="text-xs text-slate-500 mt-1">{p.position}</p>}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={() => setExpandedPlayer(isExpanded ? null : p.id)}
+                        className={`text-xs px-2 py-1.5 rounded transition ${isExpanded ? 'bg-emerald-700 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                      >
+                        📊 Stats
+                      </button>
+                      <button onClick={() => removePlayer(p.id)} className="text-xs text-rose-400 hover:text-rose-300 px-2 py-1">Eliminar</button>
+                    </div>
+                  </div>
+
+                  {/* Panel de Estadísticas Desplegable */}
+                  {isExpanded && (
+                    <div className="bg-slate-950 p-4 border-t border-slate-800 grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <p className="text-slate-500 text-xs mb-1">Asistencia total</p>
+                        <p className="font-bold text-lg">{stats.percentage}%</p>
+                        <p className="text-xs text-slate-400">
+                          {stats.present} de {stats.total} entrenos
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-slate-500 text-xs mb-1">Racha actual</p>
+                        <p className="font-bold text-lg text-amber-400">🔥 {stats.streak}</p>
+                        <p className="text-xs text-slate-400">entrenos seguidos</p>
+                      </div>
+                      <div className="col-span-2 flex gap-4 border-t border-slate-800 pt-2 mt-1">
+                        <p className="text-xs text-emerald-400">✅ {stats.present} Presentes</p>
+                        <p className="text-xs text-rose-400">❌ {stats.absent} Faltas</p>
+                        <p className="text-xs text-amber-400">🤕 {stats.injured} Lesiones</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <button onClick={() => removePlayer(p.id)} className="text-xs text-rose-400 hover:text-rose-300 px-2 py-1">Eliminar</button>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </>
       )}

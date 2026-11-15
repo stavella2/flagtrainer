@@ -45,6 +45,14 @@ export default function CoachDashboard() {
         <button onClick={logout} className="text-sm text-slate-400 hover:text-slate-200">Salir</button>
       </div>
 
+      {/* BOTÓN NUEVO PARA EL DIRECTORIO */}
+      <button 
+        onClick={() => nav('/coach/templates')} 
+        className="w-full py-3 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 font-semibold flex items-center justify-center gap-2"
+      >
+        📚 Directorio de Plantillas
+      </button>
+
       <button onClick={createTeam} className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">
         + Crear equipo
       </button>
