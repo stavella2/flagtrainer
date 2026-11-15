@@ -141,6 +141,49 @@ export default function TrainingEditor() {
     alert('¡Plantilla guardada! El admin debe aprobarla para que sea pública.')
   }
 
+  // --- DUPLICAR ENTRENAMIENTO ---
+  async function duplicateTraining() {
+    if (!confirm('¿Duplicar este entrenamiento para la próxima semana? Se creará un borrador nuevo.')) return
+    
+    const nextWeek = new Date(training.date + 'T00:00')
+    nextWeek.setDate(nextWeek.getDate() + 7)
+    const nextWeekStr = nextWeek.toISOString().slice(0, 10)
+
+    setSaving(true)
+
+    const { data: newTraining, error } = await supabase.from('trainings').insert({
+      team_id: teamId,
+      date: nextWeekStr,
+      start_time: training.start_time,
+      location: training.location,
+      notes: training.notes,
+      status: 'draft'
+    }).select().single()
+
+    if (error) {
+      setSaving(false)
+      return alert('Error al duplicar: ' + error.message)
+    }
+
+    if (blocks.length > 0) {
+      const newBlocks = blocks.map(b => ({
+        training_id: newTraining.id,
+        type: b.type,
+        title: b.title,
+        description: b.description,
+        duration_min: b.duration_min,
+        diagram: b.diagram,
+        video_url: b.video_url,
+        order_index: b.order_index
+      }))
+      await supabase.from('training_blocks').insert(newBlocks)
+    }
+
+    setSaving(false)
+    alert('¡Entrenamiento duplicado con éxito!')
+    nav(`/coach/team/${teamId}/training/${newTraining.id}`)
+  }
+
   if (loading) return <div className="p-6 text-slate-400">Cargando…</div>
   if (!training) return <div className="p-6 text-red-400">Entrenamiento no encontrado</div>
 
@@ -149,9 +192,15 @@ export default function TrainingEditor() {
 
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-5">
+      {/* HEADER CON BOTON DUPLICAR */}
       <div className="flex items-center justify-between">
         <button onClick={() => nav(`/coach/team/${teamId}`)} className="text-sm text-slate-400 hover:text-slate-200">← Volver al equipo</button>
-        {saving && <span className="text-xs text-emerald-400">Guardando…</span>}
+        <div className="flex items-center gap-3">
+          {saving && <span className="text-xs text-emerald-400">Guardando…</span>}
+          <button onClick={duplicateTraining} className="text-xs px-3 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-slate-300 font-medium transition">
+            📑 Duplicar
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center justify-between">
@@ -209,7 +258,6 @@ export default function TrainingEditor() {
             <input type="text" placeholder="Título del bloque" value={b.title} onChange={e => updateBlockDebounced(b.id, { title: e.target.value }, 'title')} className="w-full px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm font-medium" />
             <textarea placeholder="Descripción / drills concretos…" rows={2} value={b.description || ''} onChange={e => updateBlockDebounced(b.id, { description: e.target.value }, 'description')} className="w-full px-2 py-1.5 rounded bg-slate-800 border border-slate-700 text-sm" />
 
-            {/* Link de Video */}
             <div className="pt-2">
               <input
                 type="text" 
@@ -225,7 +273,6 @@ export default function TrainingEditor() {
               )}
             </div>
 
-            {/* Pizarra */}
             <div className="pt-2">
               <button onClick={() => setActiveDiagram(activeDiagram === b.id ? null : b.id)} className="text-xs px-2 py-1.5 bg-slate-800 hover:bg-slate-700 rounded text-emerald-400 font-medium transition">
                 {activeDiagram === b.id ? '▲ Ocultar Pizarra' : '🎨 Dibujar Ejercicio'}

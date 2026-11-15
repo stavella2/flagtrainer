@@ -12,10 +12,10 @@ export default function TeamDetail() {
   const [attendanceRecords, setAttendanceRecords] = useState([])
   const [loading, setLoading] = useState(true)
   
-  // Estado para el nuevo jugador
+  // Estado para el formulario (crear Y editar)
   const [newPlayer, setNewPlayer] = useState({ name: '', number: '', position: '', pin: '' })
+  const [editingId, setEditingId] = useState(null)
   
-  // Estado para el panel de estadísticas desplegable
   const [expandedPlayer, setExpandedPlayer] = useState(null)
 
   useEffect(() => { load() }, [teamId])
@@ -28,40 +28,71 @@ export default function TeamDetail() {
       supabase.from('trainings').select('*').eq('team_id', teamId).order('date', { ascending: false }),
     ])
     
-    // Traemos toda la asistencia real de este equipo
     const { data: att } = await supabase
       .from('attendance')
       .select('*, trainings!inner(team_id, status)')
       .eq('trainings.team_id', teamId)
-      .eq('trainings.status', 'done') // Solo contamos entrenamientos cerrados
+      .eq('trainings.status', 'done')
 
     setTeam(t); setPlayers(p || []); setTrainings(tr || []); setAttendanceRecords(att || [])
     setLoading(false)
   }
 
-  async function addPlayer(e) {
+  async function handleSubmitPlayer(e) {
     e.preventDefault()
     if (!newPlayer.name.trim() || !newPlayer.pin.trim()) {
       return alert('El nombre y el PIN son obligatorios')
     }
     
-    const { error } = await supabase.from('players').insert({
-      team_id: teamId,
+    const playerData = {
       name: newPlayer.name.trim(),
       number: newPlayer.number ? parseInt(newPlayer.number) : null,
       position: newPlayer.position || null,
       pin: newPlayer.pin,
-    })
+    }
+
+    if (editingId) {
+      const { error } = await supabase.from('players').update(playerData).eq('id', editingId)
+      if (error) return alert(error.message)
+      setEditingId(null)
+    } else {
+      const { error } = await supabase.from('players').insert({ ...playerData, team_id: teamId })
+      if (error) return alert(error.message)
+    }
     
-    if (error) return alert(error.message)
     setNewPlayer({ name: '', number: '', position: '', pin: '' })
     load()
+  }
+
+  function handleEditClick(p) {
+    setNewPlayer({
+      name: p.name,
+      number: p.number || '',
+      position: p.position || '',
+      pin: p.pin || '',
+    })
+    setEditingId(p.id)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setNewPlayer({ name: '', number: '', position: '', pin: '' })
   }
 
   async function removePlayer(id) {
     if (!confirm('¿Eliminar jugador?')) return
     await supabase.from('players').delete().eq('id', id)
     load()
+  }
+
+  // Manejar la lesión
+  async function toggleInjury(player) {
+    const date = prompt('¿Hasta qué fecha estará lesionado? (Formato: AAAA-MM-DD)\nDejalo vacío para darlo de alta y que vuelva a jugar.', player.injured_until || '')
+    if (date !== null) {
+      await supabase.from('players').update({ injured_until: date || null }).eq('id', player.id)
+      load()
+    }
   }
 
   async function createTraining() {
@@ -74,7 +105,6 @@ export default function TeamDetail() {
     nav(`/coach/team/${teamId}/training/${data.id}`)
   }
 
-  // Función para calcular las stats de un jugador
   function getPlayerStats(playerId) {
     const records = attendanceRecords.filter(a => a.player_id === playerId)
     const total = records.length
@@ -82,8 +112,6 @@ export default function TeamDetail() {
     const absent = records.filter(r => r.status === 'absent').length
     const injured = records.filter(r => r.status === 'injured').length
     
-    // Calcular racha (ordenamos por fecha de entrenamiento descendente)
-    // Necesitamos cruzar con el array de trainings para saber la fecha
     const sortedRecords = records.map(r => {
       const training = trainings.find(t => t.id === r.training_id)
       return { ...r, date: training?.date }
@@ -92,11 +120,10 @@ export default function TeamDetail() {
     let streak = 0
     for (const r of sortedRecords) {
       if (r.status === 'present' || r.status === 'late') streak++
-      else break // Si falta o está lesionado, se corta la racha
+      else break
     }
 
     const percentage = total > 0 ? Math.round((present / total) * 100) : 0
-
     return { total, present, absent, injured, percentage, streak }
   }
 
@@ -106,82 +133,68 @@ export default function TeamDetail() {
   return (
     <div className="max-w-2xl mx-auto p-6 space-y-5">
       <button onClick={() => nav('/coach')} className="text-sm text-slate-400 hover:text-slate-200">← Volver</button>
-      <div>
-        <h1 className="text-2xl font-bold">{team.name}</h1>
-        <p className="text-xs text-slate-500 font-mono break-all">/t/{team.access_token}</p>
+      <div className="flex items-center gap-3">
+        {team.logo_url ? (
+          <img src={team.logo_url} alt="Logo" className="w-12 h-12 rounded-full object-cover border border-slate-700" />
+        ) : (
+          <div className="w-12 h-12 rounded-full bg-slate-800 flex items-center justify-center text-xl border border-slate-700">🏈</div>
+        )}
+        <div>
+          <h1 className="text-2xl font-bold">{team.name}</h1>
+          <p className="text-xs text-slate-500 font-mono break-all">/t/{team.access_token}</p>
+        </div>
       </div>
 
       <div className="flex gap-2">
-        <button
-          onClick={() => setTab('players')}
-          className={`flex-1 py-2 rounded-lg font-medium transition ${tab === 'players' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-        >Jugadores ({players.length})</button>
-        <button
-          onClick={() => setTab('trainings')}
-          className={`flex-1 py-2 rounded-lg font-medium transition ${tab === 'trainings' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-        >Entrenamientos ({trainings.length})</button>
+        <button onClick={() => setTab('players')} className={`flex-1 py-2 rounded-lg font-medium transition ${tab === 'players' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>Jugadores ({players.length})</button>
+        <button onClick={() => setTab('trainings')} className={`flex-1 py-2 rounded-lg font-medium transition ${tab === 'trainings' ? 'bg-emerald-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>Entrenamientos ({trainings.length})</button>
       </div>
 
       {tab === 'players' && (
         <>
-          <form onSubmit={addPlayer} className="bg-slate-900 border border-slate-800 rounded-xl p-4 space-y-3">
-            <p className="text-sm font-medium border-b border-slate-800 pb-2">Agregar jugador</p>
-            <div className="grid grid-cols-2 gap-2">
-              <input
-                placeholder="Nombre" required
-                value={newPlayer.name}
-                onChange={e => setNewPlayer({ ...newPlayer, name: e.target.value })}
-                className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
-              />
-              <input
-                placeholder="Posición (opcional)"
-                value={newPlayer.position}
-                onChange={e => setNewPlayer({ ...newPlayer, position: e.target.value })}
-                className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
-              />
+          {/* FORMULARIO DE CREAR / EDITAR */}
+          <form onSubmit={handleSubmitPlayer} className={`border rounded-xl p-4 space-y-3 transition ${editingId ? 'bg-amber-950/30 border-amber-600' : 'bg-slate-900 border-slate-800'}`}>
+            <div className="flex justify-between items-center border-b border-slate-800 pb-2">
+              <p className="text-sm font-medium">{editingId ? '✏️ Editando jugador' : 'Agregar jugador'}</p>
+              {editingId && <button type="button" onClick={cancelEdit} className="text-xs text-slate-400 hover:text-white">Cancelar</button>}
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <input
-                placeholder="#" type="number"
-                value={newPlayer.number}
-                onChange={e => setNewPlayer({ ...newPlayer, number: e.target.value })}
-                className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
-              />
-              <input
-                placeholder="PIN de 4 dígitos" type="text" maxLength={4} required
-                value={newPlayer.pin}
-                onChange={e => setNewPlayer({ ...newPlayer, pin: e.target.value.replace(/\D/g, '') })}
-                className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700"
-              />
+              <input placeholder="Nombre" required value={newPlayer.name} onChange={e => setNewPlayer({ ...newPlayer, name: e.target.value })} className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700" />
+              <input placeholder="Posición (opcional)" value={newPlayer.position} onChange={e => setNewPlayer({ ...newPlayer, position: e.target.value })} className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700" />
             </div>
-            <button className="w-full py-2 mt-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-medium">+ Agregar</button>
+            <div className="grid grid-cols-2 gap-2">
+              <input placeholder="#" type="number" value={newPlayer.number} onChange={e => setNewPlayer({ ...newPlayer, number: e.target.value })} className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700" />
+              <input placeholder="PIN de 4 dígitos" type="text" maxLength={4} required value={newPlayer.pin} onChange={e => setNewPlayer({ ...newPlayer, pin: e.target.value.replace(/\D/g, '') })} className="px-3 py-2 rounded-lg bg-slate-800 border border-slate-700" />
+            </div>
+            <button className={`w-full py-2 mt-2 rounded-lg font-medium transition ${editingId ? 'bg-amber-600 hover:bg-amber-500' : 'bg-emerald-600 hover:bg-emerald-500'}`}>
+              {editingId ? 'Guardar Cambios' : '+ Agregar'}
+            </button>
           </form>
 
           <div className="space-y-2">
             {players.map(p => {
               const stats = getPlayerStats(p.id)
               const isExpanded = expandedPlayer === p.id
+              // Verificamos si está lesionado
+              const isInjured = p.injured_until && new Date(p.injured_until) >= new Date(new Date().setHours(0,0,0,0))
 
               return (
-                <div key={p.id} className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-                  {/* Fila del jugador */}
+                <div key={p.id} className={`border rounded-xl overflow-hidden transition ${isInjured ? 'bg-rose-950/20 border-rose-900' : 'bg-slate-900 border-slate-800'}`}>
                   <div className="p-3 flex items-center justify-between">
                     <div>
                       <p className="font-medium flex items-center gap-2">
                         {p.number && <span className="bg-slate-800 text-slate-300 text-xs px-2 py-0.5 rounded">#{p.number}</span>}
                         {p.name}
+                        {isInjured && <span className="text-rose-400 text-xs font-normal">| 🤕 Lesionado</span>}
                         <span className="text-xs text-slate-500 font-normal">| PIN: {p.pin}</span>
                       </p>
                       {p.position && <p className="text-xs text-slate-500 mt-1">{p.position}</p>}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button 
-                        onClick={() => setExpandedPlayer(isExpanded ? null : p.id)}
-                        className={`text-xs px-2 py-1.5 rounded transition ${isExpanded ? 'bg-emerald-700 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-                      >
-                        📊 Stats
-                      </button>
-                      <button onClick={() => removePlayer(p.id)} className="text-xs text-rose-400 hover:text-rose-300 px-2 py-1">Eliminar</button>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => setExpandedPlayer(isExpanded ? null : p.id)} className={`text-xs px-2 py-1.5 rounded transition ${isExpanded ? 'bg-emerald-700 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'}`}>📊</button>
+                      <button onClick={() => handleEditClick(p)} className="text-xs bg-slate-800 hover:bg-slate-700 text-amber-400 px-2 py-1.5 rounded transition">✏️</button>
+                      <button onClick={() => toggleInjury(p)} className={`text-xs px-2 py-1.5 rounded transition ${isInjured ? 'bg-rose-900 text-rose-200 hover:bg-rose-800' : 'bg-slate-800 hover:bg-slate-700 text-slate-400'}`} title="Marcar lesión">🤕</button>
+                      <button onClick={() => removePlayer(p.id)} className="text-xs text-rose-400 hover:text-rose-300 px-2 py-1.5">✕</button>
                     </div>
                   </div>
 
@@ -191,9 +204,7 @@ export default function TeamDetail() {
                       <div>
                         <p className="text-slate-500 text-xs mb-1">Asistencia total</p>
                         <p className="font-bold text-lg">{stats.percentage}%</p>
-                        <p className="text-xs text-slate-400">
-                          {stats.present} de {stats.total} entrenos
-                        </p>
+                        <p className="text-xs text-slate-400">{stats.present} de {stats.total} entrenos</p>
                       </div>
                       <div>
                         <p className="text-slate-500 text-xs mb-1">Racha actual</p>
@@ -216,25 +227,13 @@ export default function TeamDetail() {
 
       {tab === 'trainings' && (
         <>
-          <button onClick={createTraining} className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">
-            + Nuevo entrenamiento
-          </button>
+          <button onClick={createTraining} className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">+ Nuevo entrenamiento</button>
           <div className="space-y-2">
             {trainings.map(t => (
-              <div
-                key={t.id}
-                onClick={() => nav(`/coach/team/${teamId}/training/${t.id}`)}
-                className="bg-slate-900 border border-slate-800 rounded-xl p-4 cursor-pointer hover:border-emerald-600 transition"
-              >
+              <div key={t.id} onClick={() => nav(`/coach/team/${teamId}/training/${t.id}`)} className="bg-slate-900 border border-slate-800 rounded-xl p-4 cursor-pointer hover:border-emerald-600 transition">
                 <div className="flex items-center justify-between">
-                  <p className="font-medium">
-                    {new Date(t.date + 'T00:00').toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' })}
-                  </p>
-                  <span className={`text-xs px-2 py-1 rounded-full ${
-                    t.status === 'published' ? 'bg-emerald-900 text-emerald-300' :
-                    t.status === 'done' ? 'bg-slate-700 text-slate-300' :
-                    'bg-amber-900 text-amber-300'
-                  }`}>{t.status}</span>
+                  <p className="font-medium">{new Date(t.date + 'T00:00').toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' })}</p>
+                  <span className={`text-xs px-2 py-1 rounded-full ${t.status === 'published' ? 'bg-emerald-900 text-emerald-300' : t.status === 'done' ? 'bg-slate-700 text-slate-300' : 'bg-amber-900 text-amber-300'}`}>{t.status}</span>
                 </div>
                 {t.start_time && <p className="text-sm text-slate-400 mt-1">{t.start_time.slice(0,5)}</p>}
                 {t.location && <p className="text-sm text-slate-400">📍 {t.location}</p>}

@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { getYouTubeEmbedUrl } from '../lib/utils'
-import DrillViewer from '../components/DrillViewer' // <-- IMPORTAMOS EL VISOR
+import { getYouTubeEmbedUrl, getGoogleCalendarUrl } from '../lib/utils'
+import DrillViewer from '../components/DrillViewer'
 
 const BLOCK_LABELS = {
   warmup: '🔥 Calentamiento', drill: '🎯 Drills', offense: '⚔️ Ofensiva',
@@ -23,7 +23,6 @@ export default function PlayerView() {
   const [loginError, setLoginError] = useState('')
   const [isLoggingIn, setIsLoggingIn] = useState(false)
 
-  // Estado para saber qué bloque está abierto
   const [openBlock, setOpenBlock] = useState(null)
 
   useEffect(() => {
@@ -100,14 +99,22 @@ export default function PlayerView() {
   if (loading) return <div className="p-6 text-slate-400">Cargando…</div>
   if (!data) return <div className="p-6 text-red-400">{msg || 'Error'}</div>
 
+  // --- PANTALLA DE LOGIN ---
   if (!player) {
     return (
       <div className="max-w-md mx-auto p-6 min-h-screen flex flex-col justify-center">
-        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4">
-          <div className="text-center mb-4">
+        <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-4 shadow-xl">
+          
+          <div className="text-center mb-4 flex flex-col items-center">
+            {data.team.logo_url ? (
+              <img src={data.team.logo_url} alt="Logo" className="w-20 h-20 rounded-full object-cover mb-3 border-2 border-slate-700 shadow-lg" />
+            ) : (
+              <div className="w-20 h-20 rounded-full bg-slate-800 flex items-center justify-center text-3xl mb-3 border-2 border-slate-700">🏈</div>
+            )}
             <p className="text-xs text-slate-500 uppercase tracking-wide">Equipo</p>
             <h1 className="text-2xl font-bold">{data.team.name}</h1>
           </div>
+
           <p className="text-sm text-slate-400 text-center">Ingresá para confirmar tu asistencia</p>
           <form onSubmit={handleLogin} className="space-y-3">
             <input
@@ -121,7 +128,7 @@ export default function PlayerView() {
               className="w-full px-4 py-3 rounded-lg bg-slate-800 border border-slate-700 outline-none focus:border-emerald-500"
             />
             {loginError && <p className="text-sm text-rose-400 text-center">{loginError}</p>}
-            <button disabled={isLoggingIn} className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold disabled:opacity-50">
+            <button disabled={isLoggingIn} className="w-full py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold disabled:opacity-50 transition">
               {isLoggingIn ? 'Verificando…' : 'Ingresar'}
             </button>
           </form>
@@ -132,12 +139,25 @@ export default function PlayerView() {
 
   const t = data.next_training
   const myRsvp = rsvps.find(r => r.player_id === player.id)
+  
+  const isInjured = player.injured_until && new Date(player.injured_until) >= new Date(new Date().setHours(0,0,0,0))
 
   return (
     <div className="max-w-md mx-auto p-5 space-y-5">
-      <div className="flex justify-between items-center mb-2">
-        <span className="text-sm text-slate-400">Hola, <strong className="text-slate-200">{player.name}</strong></span>
-        <button onClick={logout} className="text-xs text-slate-500 hover:text-slate-300">Salir</button>
+      {/* HEADER */}
+      <div className="flex justify-between items-center bg-slate-900 border border-slate-800 p-3 rounded-xl">
+        <div className="flex items-center gap-3">
+          {data.team.logo_url ? (
+            <img src={data.team.logo_url} alt="Logo" className="w-10 h-10 rounded-full object-cover border border-slate-700" />
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-xl border border-slate-700">🏈</div>
+          )}
+          <div>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wide">{data.team.name}</p>
+            <span className="text-sm text-slate-300">Hola, <strong className="text-white">{player.name}</strong></span>
+          </div>
+        </div>
+        <button onClick={logout} className="text-xs text-slate-500 hover:text-slate-300 px-2 py-1 bg-slate-800 rounded">Salir</button>
       </div>
 
       {!t ? (
@@ -152,7 +172,20 @@ export default function PlayerView() {
               {new Date(t.date + 'T00:00').toLocaleDateString('es', { weekday: 'long', day: 'numeric', month: 'long' })}
               {t.start_time && ` · ${t.start_time.slice(0,5)}`}
             </p>
-            {t.location && <p className="text-sm text-slate-400">📍 {t.location}</p>}
+            
+            <div className="flex flex-wrap items-center gap-3 mb-2">
+              {t.location && <p className="text-sm text-slate-400">📍 {t.location}</p>}
+              
+              {/* BOTÓN DE CALENDARIO */}
+              <a 
+                href={getGoogleCalendarUrl(t, data.team.name)} 
+                target="_blank" 
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 bg-slate-800 hover:bg-slate-700 text-emerald-400 text-xs px-3 py-1.5 rounded-lg border border-slate-700 transition"
+              >
+                📅 Agendar
+              </a>
+            </div>
             
             <div className="space-y-2 pt-2">
               {t.blocks.map(b => {
@@ -161,7 +194,6 @@ export default function PlayerView() {
 
                 return (
                   <div key={b.id} className="border-t border-slate-800 pt-2">
-                    {/* Cabecera del bloque (Clickable si tiene detalles) */}
                     <div 
                       onClick={() => hasDetails && setOpenBlock(isOpen ? null : b.id)}
                       className={`flex items-start justify-between gap-3 p-1 rounded transition ${hasDetails ? 'cursor-pointer hover:bg-slate-800/50' : ''}`}
@@ -176,12 +208,10 @@ export default function PlayerView() {
                       </div>
                     </div>
 
-                    {/* Detalles del bloque (Acordeón) */}
                     {isOpen && (
                       <div className="mt-2 pl-1 space-y-3 pb-2">
                         {b.description && <p className="text-xs text-slate-300 bg-slate-800/30 p-2 rounded">{b.description}</p>}
                         
-                        {/* VISOR DE PIZARRA */}
                         {b.diagram && b.diagram.items && b.diagram.items.length > 0 && (
                           <div>
                             <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Pizarra del ejercicio</p>
@@ -189,24 +219,24 @@ export default function PlayerView() {
                           </div>
                         )}
 
-                        {/* VIDEO DE YOUTUBE */}
                         {b.video_url && (
                           <div>
                             <p className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Video de referencia</p>
-                            {getYouTubeEmbedUrl(b.video_url) ? (
-                              <div className="aspect-video w-full rounded-lg overflow-hidden border border-slate-700">
+                            {(b.video_url.includes('youtube.com') || b.video_url.includes('youtu.be')) ? (
+                              <div className="aspect-video w-full rounded-lg overflow-hidden border border-slate-700 bg-black">
                                 <iframe 
                                   width="100%" 
                                   height="100%" 
-                                  src={getYouTubeEmbedUrl(b.video_url)} 
+                                  src={getYouTubeEmbedUrl(b.video_url) || `https://www.youtube.com/embed/${b.video_url.split('v=')[1]?.split('&')[0] || b.video_url.split('/').pop()}`} 
                                   title={b.title} 
                                   frameBorder="0" 
+                                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
                                   allowFullScreen
                                 ></iframe>
                               </div>
                             ) : (
-                              <a href={b.video_url} target="_blank" rel="noreferrer" className="text-sm text-emerald-400 underline break-all">
-                                Abrir video externo
+                              <a href={b.video_url} target="_blank" rel="noreferrer" className="text-sm text-emerald-400 underline break-all bg-slate-800 p-2 rounded block">
+                                🔗 Abrir video externo
                               </a>
                             )}
                           </div>
@@ -219,23 +249,35 @@ export default function PlayerView() {
             </div>
           </div>
 
+          {/* TARJETA DE ASISTENCIA Y LESIÓN */}
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 space-y-3">
             <p className="text-xs text-slate-500 uppercase tracking-wide">¿Venís?</p>
-            {myRsvp && (
-              <p className="text-sm text-center mb-2">
-                Ya respondiste: <span className="font-bold text-emerald-400">{myRsvp.status === 'yes' ? 'SÍ' : myRsvp.status === 'no' ? 'NO' : 'TAL VEZ'}</span>
-              </p>
+            
+            {isInjured ? (
+              <div className="bg-rose-950/30 border border-rose-900 p-4 rounded-lg text-center">
+                <p className="text-rose-400 font-bold mb-1 text-lg">🤕 Estás en recuperación</p>
+                <p className="text-xs text-slate-400">El cuerpo técnico te ha marcado como lesionado hasta el {new Date(player.injured_until + 'T00:00').toLocaleDateString('es')}. ¡Recuperate pronto!</p>
+              </div>
+            ) : (
+              <>
+                {myRsvp && (
+                  <p className="text-sm text-center mb-2">
+                    Ya respondiste: <span className="font-bold text-emerald-400">{myRsvp.status === 'yes' ? 'SÍ' : myRsvp.status === 'no' ? 'NO' : 'TAL VEZ'}</span>
+                  </p>
+                )}
+                <div className="grid grid-cols-3 gap-2">
+                  <button onClick={() => confirm('yes')} className="py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold transition">Sí</button>
+                  <button onClick={() => confirm('maybe')} className="py-3 rounded-lg bg-amber-600 hover:bg-amber-500 font-semibold transition">Tal vez</button>
+                  <button onClick={() => confirm('no')} className="py-3 rounded-lg bg-rose-700 hover:bg-rose-600 font-semibold transition">No</button>
+                </div>
+                {msg && <p className="text-sm text-emerald-400 text-center">{msg}</p>}
+              </>
             )}
-            <div className="grid grid-cols-3 gap-2">
-              <button onClick={() => confirm('yes')} className="py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 font-semibold">Sí</button>
-              <button onClick={() => confirm('maybe')} className="py-3 rounded-lg bg-amber-600 hover:bg-amber-500 font-semibold">Tal vez</button>
-              <button onClick={() => confirm('no')} className="py-3 rounded-lg bg-rose-700 hover:bg-rose-600 font-semibold">No</button>
-            </div>
-            {msg && <p className="text-sm text-emerald-400 text-center">{msg}</p>}
           </div>
         </>
       )}
 
+      {/* HISTORIAL */}
       {history.length > 0 && (
         <div className="pt-4 space-y-2">
           <p className="text-xs text-slate-500 uppercase tracking-wide font-semibold">Entrenamientos anteriores</p>
